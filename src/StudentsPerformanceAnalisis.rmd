@@ -1,0 +1,217 @@
+---
+title: "Practica2"
+author: "Iosu Rodriguez"
+output:
+  word_document:
+    fig_caption: yes
+    highlight: default
+    toc: yes
+    toc_depth: 3
+  html_document:
+    fig_caption: yes
+    highlight: default
+    number_sections: no
+    theme: cosmo
+    toc: yes
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_libraries, include=FALSE}
+library("stringr")
+library(ggplot2)
+library("pROC")
+```
+#1. Descripción del dataset
+###Carga del dataset
+```{r load_file}
+# Cargamos el csv
+data<-read.csv2('../data/StudentsPerformance.csv',header=T,sep=",")
+# Mostramos los primeros registros
+head(data)
+
+```
+
+###Tipo de campos
+```{r}
+# Mostramos el tipo de cada campo
+sapply(data,class) 
+```
+Los tipos asignados a cada campo se corresponden a los tipos reales.
+
+###Descripción de los datos
+```{r}
+#Mostramos el resumen del dataset 
+summary(data)
+```
+Se observa que las variables no numéricas, son categóricas, de forma que más adelante podemos pensar en unificar aquellos valores que puedan representar lo mismo.
+
+#2. Integración y seleccion de los datos de interés a analizar
+El conjunto de datos está contenido en un único fichero csv, por lo que no hay necesidad de integrar datos. Si que se va a realizar una limpieza de los datos y se van a generar nuevas variables de interés. Se van a mantener todas las variables del dataset, pero las notas las tendremos en una escala entre 0 y 1, dividiendo las del conjunto de datos entre 100 (stán en una escala de 0 a 100). También generaremos dos nuevas variables, una con la nota media de las tres asignautras y otra para decir si la media está aprobada (>=0.5) o suspensa (<0.5). También vamos a reducir las categorías de niveles de estudio de los padres. Aquellos que su nivel de estudio seaCon estos datos y variables generaremos un nuevo csv. 
+
+#3. Limpieza de los datos
+##3.1.Valores nulos o ceros
+```{r}
+# Mostramos cuantos valores son nulos o 0
+sapply(data, function(x) sum(is.na(x) || x == 0))
+```
+Observamos que ningún campo tiene valores nulos o 0.
+
+##3.2.Valores extremos o outliers
+```{r}
+# Mostramos un boxplot de cada variable numérica para observar si hay valores extremos.
+boxplot(data$math.score,main="Notas matemáticas",col="gray")
+boxplot(data$writing.score,main="Notas writing",col="gray")
+boxplot(data$reading.score,main="Notas reading",col="gray")
+```
+Se observan varios valores extremos por debajo en las tres asignaturas. Sin embargo no nos preocupa. Se deben a alumnos que han sacado una nota muy baja, pero ya que no hay notas que superen la máxima posible (100) o sean menor que la mínima posible (<0), los mantenemos.
+
+#4.Análisis de los datos
+##4.1. Selección de los grupos de datos a analizar
+Además de los datos que disponemos, queremos añadir dos nuevos campos. Uno para indicar la media de las tres asignautras de cada alumno y otro para indicar si con su media supera el aprobado o no. Se considera aprobado, una nota media igual o mayor a 50.
+
+También vamos a unificar los niveles de estudio de los padres en 2. Aquellos con estudios universitarios (university) y aquellos que no (no_university). Se considera que no tienen estudios universitarios aquellos con valor 'high school', 'some high school'
+```{r}
+# Añadimos la variable media
+data$mean.score = as.numeric((data$math.score + data$reading.score + data$writing.score)/3)
+# Añadimos la variable aprobado
+data$aprobado = as.integer(data$mean.score >=50)
+
+#Unificamos los niveles de educación de los padres
+data$parental.level.of.education = as.factor(gsub("high school|some high school", "no_university",data$parental.level.of.education, ignore.case = TRUE))
+data$parental.level.of.education<-as.character(data$parental.level.of.education)
+data$parental.level.of.education = as.factor(replace(data$parental.level.of.education, data$parental.level.of.education != "no_university", "university"))
+
+summary(data$parental.level.of.education)
+sapply(data,class)
+```
+
+##4.2. Comprobación de la normalidad y homogeneidad de la varianza
+
+###Normalización de los datos
+Vamos a aplicar el test de Shapiro Wilk en cada variable numérica para ver si está normalizada.
+```{r}
+shapiro.test(data$math.score)
+shapiro.test(data$reading.score)
+shapiro.test(data$writing.score)
+shapiro.test(data$mean.score)
+```
+En este caso, las variables numéricas son valores entre 0 y 100 y todas están normalizadas puesto que su p-valor es < 0.05. Sin embargo vamos a hacer que estos valores queden entre 0 y 1. Tan solo dividiremos entre 100.
+```{r}
+max = 100
+data$math.score = as.numeric(data$math.score/max)
+data$reading.score = as.numeric(data$reading.score/max)
+data$writing.score = as.numeric(data$writing.score/max)
+data$mean.score = as.numeric(round(data$mean.score/max, 2))
+```
+
+###Guardamos el dataset limpio y con los nuevos datos
+```{r}
+write.csv(data, "../data/StudentsPerformance_clean.csv")
+```
+
+##4.3. Aplicación de pruebas estadísticas
+
+###4.3.1.¿Qué factores influyen más a la hora de que un alumno saque mejores notas?
+Para responder a esta pregunta vamos a observar la relación entre la nota media y cada variable categórica.
+
+```{r}
+boxplot(data$mean.score ~ data$parental.level.of.education,main="Nota media vs nivel educativo padres")
+boxplot(data$mean.score ~ data$lunch,main="Nota media vs tipo comida")
+boxplot(data$mean.score ~ data$gender,main="Nota media vs género")
+boxplot(data$mean.score ~ data$race.ethnicity,main="Nota media vs raza")
+boxplot(data$mean.score ~ data$test.preparation.course,main="Nota media vs curso preparación")
+```
+Viendo el nivel de solapamiento que hay, podemos decir que la raza, y el haber realizado el curso de preparación son los factores que más influyen en la nota media. El sexo apenas tiene influencia y el nivel educativo de los padres y el tipo de comida, tiene cierta influencia.
+
+###4.3.2.¿En que asignaturas son mejores los hombres y en cuales las mujeres?
+
+```{r}
+medias_por_genero = c(
+  as.numeric(round(mean(data$math.score[data$gender=='female']),2)),
+  as.numeric(round(mean(data$math.score[data$gender=='male']),2)),
+  as.numeric(round(mean(data$reading.score[data$gender=='female']),2)),
+  as.numeric(round(mean(data$reading.score[data$gender=='male']),2)),
+  as.numeric(round(mean(data$writing.score[data$gender=='female']),2)),
+  as.numeric(round(mean(data$writing.score[data$gender=='male']),2)),
+  as.numeric(round(mean(data$mean.score[data$gender=='female']),2)),
+  as.numeric(round(mean(data$mean.score[data$gender=='male']),2))
+)
+genero = c(rep(c('female','male'),4))
+asignatura = c(rep('math',2),rep('reading',2),rep('writing',2),rep('mediaTotal',2))
+dataMediasGenero=data.frame(medias_por_genero,genero,asignatura)
+
+ggplot(dataMediasGenero, aes(fill=genero, y=medias_por_genero, x=asignatura)) + 
+    geom_bar(position="dodge", stat="identity")
+ 
+```
+Podemos asegurar que las mujeres han obtenido mejor media. Que los hombres han sacado mejor nota media en matemáticas y las mujeres en lectura y escritura.
+
+###4.3.3.¿La nota media de los alumnos es mayor para aquellos con padres con estudios universitarios?
+Para ello vamos a realizar un contraste de dos muestras sobre la diferencia de las media. Sabemos que los datos siguen una distribución normal. Aun así, como el número de muestras es grande, por el teorema del límite central, podemos considerar que sigue una distribución normal.
+
+Planteamos las hipótesis:
+-Hipótesis nula: H0: mu1-mu2=0. La nota media es la misma tanto si los padres tienen estudios universitarios (mu1) como si no (m2).
+
+-Hipótesis alternativa: H1: mu1-mu2>0 la nota media es superior si los padres tienen estudios universitarios.
+```{r}
+padresuniv.si<-data[ data$parental.level.of.education == 'university', ]
+padresuniv.no<-data[ data$parental.level.of.education == 'no_university', ]
+t.test(padresuniv.si$mean.score, padresuniv.no$mean.score, alternative="greater", conf.level=0.99, paired=FALSE, var.equal=FALSE)
+```
+
+Puesto que el p-valor es 9.878e-11 < 0.01, rechazamos la hipótesis nula y aceptamos la hipótesis alternativa. Por tanto podemos decir con un 99% de confianza que la nota media de los alumnos es mayor en aquellos que tienen padres universitarios.
+
+###4.3.4.¿Podríamos saber a partir de los datos de los alumnos, antes de realizar los exámenes, que previsión hay de aprobados y suspensos en función de sus datos?
+Vamos a aplicar la regresión logística considerando como variables todos los factores. De esta forma crearemos un modelo para clasificar a los alumnos como aprobados o suspendidos en función de sus datos.
+```{r}
+model = glm(data$aprobado~data$gender+data$parental.level.of.education+data$lunch+data$race.ethnicity+data$test.preparation.course, family=binomial(link='logit'))
+summary(model)
+
+```
+Observamos que el modelo obtenido no es demasiado bueno. Posiblemente necesitemos más datos, o simplemente, clasificar a los alumnos por sus factores como posibles aprobados o suspendidos, no es factible, ya que las posibles combinaciones de los valores que toman los factores es limitada. Veremos con este modelo cuantos acertamos y fallamos.
+```{r}
+prob_acc <-predict(model,data, type = "response")
+pred_acc <-ifelse (prob_acc>= 0.5, 1, 0)
+table(data$aprobado,pred_acc)
+```
+Con este modelo vemos que somo muy optimistas, dando por aprobados a la gran mayoría de suspendidos. Sin embargo, si predecimos bien aquellos que han aprobado.
+
+Ahora vamos a ver si conseguimos un modelo que sirva para predecir los aprobados y suspensos de cada asignatura en función de los factores
+```{r}
+accMath = as.integer(data$math.score >=0.5)
+accReading = as.integer(data$reading.score >=0.5)
+accWriting = as.integer(data$writing.score >=0.5)
+
+modelMath = glm(accMath~data$gender+data$parental.level.of.education+data$lunch+data$race.ethnicity+data$test.preparation.course, family=binomial(link='logit'))
+summary(modelMath )
+
+modelReading = glm(accReading~data$gender+data$parental.level.of.education+data$lunch+data$race.ethnicity+data$test.preparation.course, family=binomial(link='logit'))
+summary(modelReading)
+
+modelWriting = glm(accWriting~data$gender+data$parental.level.of.education+data$lunch+data$race.ethnicity+data$test.preparation.course, family=binomial(link='logit'))
+summary(modelWriting)
+
+```
+
+```{r}
+print('Predicciones para matemáticas')
+prob_acc <-predict(modelMath,data, type = "response")
+pred_acc <-ifelse (prob_acc>= 0.5, 1, 0)
+table(accMath,pred_acc)
+
+print('Predicciones para reading')
+prob_acc <-predict(modelReading,data, type = "response")
+pred_acc <-ifelse (prob_acc>= 0.5, 1, 0)
+table(accReading,pred_acc)
+
+print('Predicciones para writing')
+prob_acc <-predict(modelWriting,data, type = "response")
+pred_acc <-ifelse (prob_acc>= 0.5, 1, 0)
+table(accWriting,pred_acc)
+```
+
+Como observamos seguimos sin poder obtener un modelo bueno para poder clasificar con cierta seguridad los aprobados y suspensos a partir de los datos de los alumnos, antes de que realicen los exámenes. Concluimos que con los factores de los alumnos no somo capaces de clasificar a estos como candidatos a aprobar o suspender.
